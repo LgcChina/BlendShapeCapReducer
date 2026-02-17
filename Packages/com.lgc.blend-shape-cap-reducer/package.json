@@ -1,0 +1,22 @@
+{
+  "name": "com.lgcchina.blend-shape-cap-reducer",
+  "displayName": "LGC_BlendShapeCapReducer_形态键上限重设",
+  "version": "1.0.0",
+  "unity": "2022.3",
+  "description": "调整网格BlendShape上限，支持生成替换网格、撤销生成、从FBX还原网格",
+  "author": {
+    "name": "LgcChina",
+    "url": "https://github.com/LgcChina"
+  },
+  "vpmDependencies": {
+  "com.vrchat.avatars": "3.x.x"
+  },
+  "keywords": [ "VRChat", "BlendShape", "形态键", "工具", "Unity" ],
+  "samples": [
+    {
+      "displayName": "示例场景与预设",
+      "description": "未包含示例场景与预设",
+      "path": "Samples~/QuickStart"
+    }
+  ]
+}
