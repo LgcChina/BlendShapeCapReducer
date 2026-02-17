@@ -3,18 +3,11 @@
 /*
  * 形态键上限重设工具（仅编辑器）
  * 作者：LGC & M365 Copilot
- *
- * 更新点（修复“清除按钮未成功移除物体并更新界面”）：
- * - 在清除按钮点击的帧，短路后续对象切换与UI逻辑：显式置空 newSmr/smr，清空会话状态，刷新界面并 return。
- * - 使用 Repaint() + GUI.FocusControl(null) + GUIUtility.keyboardControl = 0，确保 UI 焦点与绘制立即更新。
- *
- * 其它功能：
- * 1) 顶部语言切换：中文（默认）/ English / 日本語。
- * 2) SkinnedMeshRenderer 槽位右侧「清除」按钮：清空槽位并重置工具状态（不删除场景物体）。
- * 3) 逐个 BlendShape 上限设置，生成新 Mesh 并替换；生成成功后按钮禁用防重复。
- * 4) “还原网格（撤销本次生成）”：恢复到拖入时记录的原始网格，并删除生成目录与资产。
- * 5) “从FBX还原网格”（底部固定、独立）：优先手动选择 .fbx；未选择时自动定位（Prefab 源对象或父级 Animator.avatar），
- *    在 FBX 子资产中按对象名匹配 Mesh 并替换；成功后更新“当前网格（引用）”。
+ * 说明：为 SkinnedMeshRenderer 的 BlendShapes 设置新的上限（线性缩放），生成新 Mesh 资产并自动替换当前组件。
+ * 菜单入口：LGC/形态键上限重设
+ * 默认保存路径（信息区展示）：Assets/LGC/Tools/形态键上限重设
+ * 生成网格保存路径：Assets/LGC/Tools/形态键上限重设/已生成/<物体名称>_<时间戳:yyyyMMdd_HH_mm_ss>/<源Mesh名>_Capped.asset
+ * 注意：需要源 Mesh 开启 Read/Write Enabled。
  */
 
 using System;
@@ -23,265 +16,81 @@ using System.IO;
 using UnityEditor;
 using UnityEngine;
 
-public class BlendShapeCapReducer : EditorWindow
+public class BlendShapeCapperWindow : EditorWindow
 {
-    // ===== 语言支持 =====
-    private enum UILang { ZhCN, En, Ja }
-    private UILang uiLang = UILang.ZhCN;
-    private Strings strings = Strings.For(UILang.ZhCN);
-
-    private class Strings
-    {
-        public string ToolTitle, LangLabel, SkinnedMeshRendererLabel, ClearBtn;
-        public string RefInfoTitle, SourceMeshLabel, CurrentMeshLabel, LastGenMeshLabel;
-        public string CapsTitle, GenerateBtn, UndoBtn, BottomFbxTitle, ManualFbxLabel, BottomFbxButton;
-        public string StatusReady, StatusNoSMR, ErrorNotReadable, WarnNoBlendShapes;
-        public string StatusRecordedFmt, StatusGeneratedDone, StatusUndoDoneFmt, StatusUndoDoneNoDir;
-        public string ErrorUndoNoSource, ErrorNoFBXSelected, ErrorAutoLocateFBXFailed, ErrorFBXNoChildren;
-        public string StatusAutoLocatedFmt, WarnAutoLocateMissing, WarnFbxNoMatchFmt, StatusFbxRestoredFmt;
-
-        public static Strings For(UILang lang)
-        {
-            var s = new Strings();
-            switch (lang)
-            {
-                case UILang.En:
-                    s.ToolTitle = "BlendShape Cap (Generate & Replace)";
-                    s.LangLabel = "Language";
-                    s.SkinnedMeshRendererLabel = "SkinnedMeshRenderer";
-                    s.ClearBtn = "Clear";
-                    s.RefInfoTitle = "References";
-                    s.SourceMeshLabel = "Source Mesh";
-                    s.CurrentMeshLabel = "Current Mesh";
-                    s.LastGenMeshLabel = "Last Generated Mesh";
-                    s.CapsTitle = "Per-BlendShape Cap (0~100)";
-                    s.GenerateBtn = "Generate New Mesh & Replace";
-                    s.UndoBtn = "Restore Mesh (Undo This Generation)";
-                    s.BottomFbxTitle = "Restore Mesh from FBX (Independent)";
-                    s.ManualFbxLabel = "Original FBX (optional)";
-                    s.BottomFbxButton = "Restore from FBX";
-                    s.StatusReady = "Ready: drag a SkinnedMeshRenderer.";
-                    s.StatusNoSMR = "Hint: SkinnedMeshRenderer not assigned or sharedMesh is null.";
-                    s.ErrorNotReadable = "Error: Mesh is not Read/Write Enabled.";
-                    s.WarnNoBlendShapes = "No BlendShapes found.";
-                    s.StatusRecordedFmt = "Recorded original mesh: {0}";
-                    s.StatusGeneratedDone = "Done: generated and replaced.";
-                    s.StatusUndoDoneFmt = "Restored and deleted generated directory: {0}";
-                    s.StatusUndoDoneNoDir = "Restored to original mesh.";
-                    s.ErrorUndoNoSource = "Undo failed: original mesh not recorded.";
-                    s.ErrorNoFBXSelected = "Restore failed: select a valid .fbx file.";
-                    s.ErrorAutoLocateFBXFailed = "Restore failed: cannot auto-locate FBX.";
-                    s.ErrorFBXNoChildren = "FBX has no child assets.";
-                    s.StatusAutoLocatedFmt = "Auto-located FBX: {0}";
-                    s.WarnAutoLocateMissing = "Cannot auto-locate FBX, please select a .fbx file.";
-                    s.WarnFbxNoMatchFmt = "No matching Mesh found in FBX for object name: {0}";
-                    s.StatusFbxRestoredFmt = "Restored mesh from FBX: {0}";
-                    break;
-
-                case UILang.Ja:
-                    s.ToolTitle = "BlendShape上限調整（生成して置換）";
-                    s.LangLabel = "言語";
-                    s.SkinnedMeshRendererLabel = "SkinnedMeshRenderer";
-                    s.ClearBtn = "クリア";
-                    s.RefInfoTitle = "参照情報";
-                    s.SourceMeshLabel = "ソースメッシュ";
-                    s.CurrentMeshLabel = "現在のメッシュ";
-                    s.LastGenMeshLabel = "最新生成メッシュ";
-                    s.CapsTitle = "ブレンドシェイプ上限（0〜100）";
-                    s.GenerateBtn = "新規メッシュ生成＆置換";
-                    s.UndoBtn = "メッシュを元に戻す（今回の生成を撤回）";
-                    s.BottomFbxTitle = "FBXからメッシュを復元（独立）";
-                    s.ManualFbxLabel = "元FBX（任意）";
-                    s.BottomFbxButton = "FBXから復元";
-                    s.StatusReady = "準備完了：SkinnedMeshRendererをドラッグしてください。";
-                    s.StatusNoSMR = "ヒント：SkinnedMeshRenderer未指定、またはsharedMeshがnullです。";
-                    s.ErrorNotReadable = "エラー：メッシュがRead/Write有効ではありません。";
-                    s.WarnNoBlendShapes = "BlendShapesが見つかりません。";
-                    s.StatusRecordedFmt = "元メッシュを記録しました：{0}";
-                    s.StatusGeneratedDone = "完了：生成して置換しました。";
-                    s.StatusUndoDoneFmt = "元に戻し、生成ディレクトリを削除しました：{0}";
-                    s.StatusUndoDoneNoDir = "元メッシュへ復元しました。";
-                    s.ErrorUndoNoSource = "撤回失敗：元メッシュが記録されていません。";
-                    s.ErrorNoFBXSelected = "復元失敗：有効な .fbx を選択してください。";
-                    s.ErrorAutoLocateFBXFailed = "復元失敗：FBXを自動特定できません。";
-                    s.ErrorFBXNoChildren = "FBXに子アセットがありません。";
-                    s.StatusAutoLocatedFmt = "自動特定したFBX：{0}";
-                    s.WarnAutoLocateMissing = "FBXを自動特定できません。 .fbx を選択してください。";
-                    s.WarnFbxNoMatchFmt = "FBXに一致するメッシュがありません。オブジェクト名：{0}";
-                    s.StatusFbxRestoredFmt = "FBXからメッシュを復元しました：{0}";
-                    break;
-
-                default: // ZhCN
-                    s.ToolTitle = "形态键上限重设工具";
-                    s.LangLabel = "语言";
-                    s.SkinnedMeshRendererLabel = "SkinnedMeshRenderer";
-                    s.ClearBtn = "清除";
-                    s.RefInfoTitle = "引用信息";
-                    s.SourceMeshLabel = "源网格";
-                    s.CurrentMeshLabel = "当前网格";
-                    s.LastGenMeshLabel = "最新生成网格";
-                    s.CapsTitle = "逐个形态键上限（0~100）";
-                    s.GenerateBtn = "生成新网格并替换";
-                    s.UndoBtn = "还原网格（撤销本次生成）";
-                    s.BottomFbxTitle = "从FBX还原网格（独立）";
-                    s.ManualFbxLabel = "原始FBX（可选）";
-                    s.BottomFbxButton = "从FBX还原网格";
-                    s.StatusReady = "准备就绪：请拖入含有 BlendShapes 的 SkinnedMeshRenderer。";
-                    s.StatusNoSMR = "提示：尚未指定 SkinnedMeshRenderer 或其 sharedMesh为空。";
-                    s.ErrorNotReadable = "错误：Mesh 未开启 Read/Write。";
-                    s.WarnNoBlendShapes = "未找到形态键（BlendShapes）。";
-                    s.StatusRecordedFmt = "已记录原始网格：{0}";
-                    s.StatusGeneratedDone = "完成：已生成并替换。";
-                    s.StatusUndoDoneFmt = "已还原并删除生成目录：{0}";
-                    s.StatusUndoDoneNoDir = "已还原到原始网格。";
-                    s.ErrorUndoNoSource = "撤销失败：未记录原始网格。";
-                    s.ErrorNoFBXSelected = "还原失败：请选择有效 .fbx 文件。";
-                    s.ErrorAutoLocateFBXFailed = "还原失败：未能自动定位 FBX。";
-                    s.ErrorFBXNoChildren = "FBX 内无子资产。";
-                    s.StatusAutoLocatedFmt = "自动定位到 FBX：{0}";
-                    s.WarnAutoLocateMissing = "未能自动定位 FBX，请选择 .fbx 文件。";
-                    s.WarnFbxNoMatchFmt = "FBX 中未找到匹配 Mesh：{0}";
-                    s.StatusFbxRestoredFmt = "已从 FBX 还原网格：{0}";
-                    break;
-            }
-            return s;
-        }
-    }
-
-    // ===== 字段（统一声明） =====
-    private SkinnedMeshRenderer smr;      // 当前对象
-    private Mesh sourceMesh;               // 内部快照
-    private Mesh currentMeshRef;           // 面板显示：当前网格
-
-    private Mesh recordedOriginalMesh;     // 拖入时记录的原始网格（撤销用）
-    private Mesh lastGeneratedMeshRef;     // 最新生成网格
-    private string lastGeneratedDir;       // 最新生成目录
-    private bool hasGeneratedThisSession = false; // 控制生成按钮禁用
-
-    private UnityEngine.Object manualFbxAsset; // 用户选择的 .fbx（从FBX还原独立使用）
-
+    private SkinnedMeshRenderer smr;
+    private Mesh sourceMesh;
     private Vector2 scroll;
+    private readonly Dictionary<int, float> perShapeCap = new Dictionary<int, float>(); // shapeIndex -> cap
+
+    // 状态消息（在面板底部 HelpBox 显示）
     private string statusMessage = "准备就绪：请拖入含有 BlendShapes 的 SkinnedMeshRenderer。";
     private MessageType statusType = MessageType.Info;
 
-    private readonly Dictionary<int, float> perShapeCap = new Dictionary<int, float>();
-
+    // 路径常量（按你要求修改）
     private const string kBaseFolder = "Assets/LGC/Tools/形态键上限重设";
     private const string kGeneratedFolder = "Assets/LGC/Tools/形态键上限重设/已生成";
 
     [MenuItem("LGC/形态键上限重设")]
     public static void ShowWindow()
     {
-        var win = GetWindow<BlendShapeCapReducer>("形态键上限重设");
-        win.minSize = new Vector2(700, 600);
-        win.statusMessage = win.strings.StatusReady;
-        win.statusType = MessageType.Info;
+        var win = GetWindow<BlendShapeCapperWindow>("形态键上限重设");
+        win.minSize = new Vector2(560, 420);
     }
-
-    private void OnDisable() => ClearSessionRecord();
 
     private void OnGUI()
     {
-        // 顶部：语言切换
-        EditorGUILayout.BeginHorizontal();
-        EditorGUILayout.LabelField(strings.LangLabel, GUILayout.Width(60));
-        var newLang = (UILang)EditorGUILayout.EnumPopup(uiLang);
-        if (newLang != uiLang)
-        {
-            uiLang = newLang;
-            strings = Strings.For(uiLang);
-            statusMessage = strings.StatusReady;
-            statusType = MessageType.Info;
-            Repaint();
-        }
-        EditorGUILayout.EndHorizontal();
+        EditorGUILayout.LabelField("形态键上限重设（生成新网格并自动替换）", EditorStyles.boldLabel);
+        EditorGUILayout.Space();
 
-        // 对象选择 + 右侧清除按钮（清除=移除当前填入的物体引用）
-        EditorGUILayout.BeginHorizontal();
-        var newSmr = (SkinnedMeshRenderer)EditorGUILayout.ObjectField(strings.SkinnedMeshRendererLabel, smr, typeof(SkinnedMeshRenderer), true);
-        bool clearClicked = GUILayout.Button(strings.ClearBtn, GUILayout.Width(60));
-        EditorGUILayout.EndHorizontal();
-
-        if (clearClicked)
-        {
-            // —— 关键：清除本帧的 ObjectField 值影响，短路后续逻辑 —— //
-            // 彻底清空槽位并重置工具状态（不删除场景物体）
-            ClearSessionRecord();
-            smr = null;
-            sourceMesh = null;
-            currentMeshRef = null;
-            manualFbxAsset = null;
-
-            // 释放焦点并刷新
-            GUI.FocusControl(null);
-            GUIUtility.keyboardControl = 0;
-            SetStatus(strings.StatusReady, MessageType.Info);
-
-            // 绘制基础UI（空态）
-            DrawReferenceInfoArea();
-            DrawStatusArea();
-            DrawFbxRestoreArea(); // 底部固定
-            Repaint();
-            return; // 🔴 本帧直接返回，避免 old newSmr 被后续逻辑采纳
-        }
-
-        // —— 正常处理对象切换 —— //
-        if (newSmr != smr)
-        {
-            ClearSessionRecord(); // 切换对象：重置状态，生成按钮可用
-            smr = newSmr;
-            sourceMesh = smr ? smr.sharedMesh : null;
-            currentMeshRef = sourceMesh;
-
-            if (smr != null && sourceMesh != null)
-            {
-                recordedOriginalMesh = sourceMesh; // 拖入即记录
-                SetStatus(string.Format(strings.StatusRecordedFmt, recordedOriginalMesh.name), MessageType.Info);
-            }
-            else
-            {
-                SetStatus(strings.StatusNoSMR, MessageType.Info);
-            }
-        }
-        else
-        {
-            sourceMesh = smr ? smr.sharedMesh : null;
-            currentMeshRef = sourceMesh;
-        }
-
-        // 引用信息
-        DrawReferenceInfoArea();
+        smr = (SkinnedMeshRenderer)EditorGUILayout.ObjectField("SkinnedMeshRenderer", smr, typeof(SkinnedMeshRenderer), true);
+        sourceMesh = smr ? smr.sharedMesh : null;
 
         if (sourceMesh == null)
         {
+            EditorGUILayout.HelpBox("请拖入含有 BlendShapes 的 SkinnedMeshRenderer。", MessageType.Info);
+            SetStatus("提示：尚未指定 SkinnedMeshRenderer 或其 sharedMesh 为空。", MessageType.Info);
             DrawStatusArea();
-            DrawFbxRestoreArea(); // 底部固定
             return;
         }
 
         if (!sourceMesh.isReadable)
         {
-            EditorGUILayout.HelpBox(strings.ErrorNotReadable, MessageType.Error);
+            EditorGUILayout.HelpBox("当前 Mesh 未开启 Read/Write（不可读）。请在模型导入设置中勾选 Read/Write Enabled，然后重新导入。", MessageType.Error);
+            SetStatus("错误：源 Mesh 不可读（需开启 Read/Write Enabled）。", MessageType.Error);
             DrawStatusArea();
-            DrawFbxRestoreArea();
             return;
         }
 
-        // 无 BlendShapes：生成按钮置灰
+        EditorGUILayout.LabelField($"源 Mesh：{sourceMesh.name}", EditorStyles.miniBoldLabel);
+        EditorGUILayout.LabelField($"顶点数：{sourceMesh.vertexCount}，子网格：{sourceMesh.subMeshCount}，形态键：{sourceMesh.blendShapeCount}");
+
+        // 当没有形态键时，给出提示并禁用后续操作
         if (sourceMesh.blendShapeCount == 0)
         {
-            EditorGUILayout.HelpBox(strings.WarnNoBlendShapes, MessageType.Warning);
+            EditorGUILayout.Space();
+            EditorGUILayout.HelpBox("未在该模型找到形态键（BlendShapes）。请确认导入设置或模型内容。", MessageType.Warning);
+
+            // 禁用按钮与底部区域提示
+            SetStatus("警告：该 Mesh 不包含任何 BlendShapes，无法生成。", MessageType.Warning);
+
+            EditorGUILayout.Space();
             using (new EditorGUI.DisabledScope(true))
-                GUILayout.Button(strings.GenerateBtn, GUILayout.Height(28));
+            {
+                GUILayout.Button("生成新网格并替换", GUILayout.Height(28));
+            }
+
+            EditorGUILayout.Space();
+            DrawInfoArea();
             DrawStatusArea();
-            DrawFbxRestoreArea();
             return;
         }
 
-        // 形态键上限设置（滚动）
         EditorGUILayout.Space();
+
+        // 逐个形态键设置上限
         EnsurePerShapeCaps(sourceMesh);
-        EditorGUILayout.LabelField(strings.CapsTitle, EditorStyles.miniBoldLabel);
+        EditorGUILayout.LabelField("逐个形态键设置上限（0~100）：", EditorStyles.miniBoldLabel);
 
         scroll = EditorGUILayout.BeginScrollView(scroll, GUILayout.Height(260));
         for (int i = 0; i < sourceMesh.blendShapeCount; i++)
@@ -295,223 +104,36 @@ public class BlendShapeCapReducer : EditorWindow
 
         EditorGUILayout.Space();
 
-        // 生成按钮：生成后禁用；撤销/清除/切换对象/关闭窗口才重新启用
-        using (new EditorGUI.DisabledScope(hasGeneratedThisSession))
+        // 生成按钮（默认：生成后直接替换当前 SMR）
+        using (new EditorGUI.DisabledScope(sourceMesh.blendShapeCount == 0))
         {
-            if (GUILayout.Button(strings.GenerateBtn, GUILayout.Height(28)))
+            if (GUILayout.Button("生成新网格并替换", GUILayout.Height(28)))
+            {
                 GenerateAndReplace();
+            }
         }
 
-        // 生成成功后显示撤销按钮
-        if (hasGeneratedThisSession)
-        {
-            if (GUILayout.Button(strings.UndoBtn, GUILayout.Height(26)))
-                RestoreRecordedOriginalMeshAndDeleteGenerated();
-        }
+        EditorGUILayout.Space();
+        DrawInfoArea();
 
+        // 面板底部状态区域
         DrawStatusArea();
-        DrawFbxRestoreArea(); // 底部固定
     }
 
-    // 引用信息（源/当前/最新生成）
-    private void DrawReferenceInfoArea()
+    private void DrawInfoArea()
     {
-        EditorGUILayout.Space();
-        EditorGUILayout.LabelField(strings.RefInfoTitle, EditorStyles.miniBoldLabel);
-
-        using (new EditorGUI.DisabledScope(true))
-            recordedOriginalMesh = (Mesh)EditorGUILayout.ObjectField(strings.SourceMeshLabel, recordedOriginalMesh, typeof(Mesh), false);
-
-        using (new EditorGUI.DisabledScope(true))
-            currentMeshRef = (Mesh)EditorGUILayout.ObjectField(strings.CurrentMeshLabel, currentMeshRef, typeof(Mesh), false);
-
-        using (new EditorGUI.DisabledScope(true))
-            lastGeneratedMeshRef = (Mesh)EditorGUILayout.ObjectField(strings.LastGenMeshLabel, lastGeneratedMeshRef, typeof(Mesh), false);
-    }
-
-    private void ClearSessionRecord()
-    {
-        recordedOriginalMesh = null;
-        lastGeneratedMeshRef = null;
-        lastGeneratedDir = null;
-        hasGeneratedThisSession = false;
-        manualFbxAsset = null;
-        currentMeshRef = null;
-        sourceMesh = null;
-        perShapeCap.Clear();
-        statusMessage = strings.StatusReady;
-        statusType = MessageType.Info;
-    }
-
-    private void GenerateAndReplace()
-    {
-        if (sourceMesh == null || smr == null) { SetStatus(strings.StatusNoSMR, MessageType.Error); return; }
-        if (!sourceMesh.isReadable) { SetStatus(strings.ErrorNotReadable, MessageType.Error); return; }
-        if (sourceMesh.blendShapeCount == 0) { SetStatus(strings.WarnNoBlendShapes, MessageType.Error); return; }
-
-        var caps = new Dictionary<int, float>();
-        for (int i = 0; i < sourceMesh.blendShapeCount; i++)
-        {
-            float cap = perShapeCap.TryGetValue(i, out float v) ? v : 100f;
-            caps[i] = Mathf.Clamp(cap, 0f, 100f) / 100f;
-        }
-
-        Mesh newMesh = CreateCappedMesh(sourceMesh, caps);
-
-        string objName = smr.gameObject.name;
-        string timestamp = DateTime.Now.ToString("yyyyMMdd_HH_mm_ss");
-        string dir = $"{kGeneratedFolder}/{SanitizeFolderName(objName)}_{timestamp}";
-        CreateFolderRecursive(kBaseFolder);
-        CreateFolderRecursive(kGeneratedFolder);
-        CreateFolderRecursive(dir);
-
-        string assetName = $"{sourceMesh.name}_Capped.asset";
-        string fullPath = Path.Combine(dir, assetName).Replace("\\", "/");
-        AssetDatabase.CreateAsset(newMesh, AssetDatabase.GenerateUniqueAssetPath(fullPath));
-        AssetDatabase.SaveAssets();
-        AssetDatabase.Refresh();
-
-        Undo.RecordObject(smr, "Replace SharedMesh with Capped");
-        smr.sharedMesh = newMesh;
-        EditorUtility.SetDirty(smr);
-
-        sourceMesh = smr.sharedMesh;
-        currentMeshRef = sourceMesh;
-        lastGeneratedMeshRef = newMesh;
-        lastGeneratedDir = dir;
-
-        hasGeneratedThisSession = true;
-        SetStatus(strings.StatusGeneratedDone, MessageType.Info);
-    }
-
-    private void RestoreRecordedOriginalMeshAndDeleteGenerated()
-    {
-        if (smr == null || recordedOriginalMesh == null)
-        {
-            SetStatus(strings.ErrorUndoNoSource, MessageType.Error);
-            return;
-        }
-
-        Undo.RecordObject(smr, "Restore Original Mesh");
-        smr.sharedMesh = recordedOriginalMesh;
-        EditorUtility.SetDirty(smr);
-
-        if (!string.IsNullOrEmpty(lastGeneratedDir))
-        {
-            DeleteFolderRecursively(lastGeneratedDir);
-            SetStatus(string.Format(strings.StatusUndoDoneFmt, lastGeneratedDir), MessageType.Info);
-        }
-        else
-        {
-            SetStatus(strings.StatusUndoDoneNoDir, MessageType.Info);
-        }
-
-        sourceMesh = smr.sharedMesh;
-        currentMeshRef = sourceMesh;
-        lastGeneratedMeshRef = null;
-        lastGeneratedDir = null;
-        hasGeneratedThisSession = false;
-    }
-
-    private void DeleteFolderRecursively(string folderPath)
-    {
-        if (string.IsNullOrEmpty(folderPath) || !folderPath.StartsWith("Assets")) return;
-        string[] guids = AssetDatabase.FindAssets("", new[] { folderPath });
-        foreach (string guid in guids)
-        {
-            string assetPath = AssetDatabase.GUIDToAssetPath(guid);
-            if (!AssetDatabase.IsValidFolder(assetPath))
-                AssetDatabase.DeleteAsset(assetPath);
-        }
-        AssetDatabase.DeleteAsset(folderPath);
-        AssetDatabase.SaveAssets();
-        AssetDatabase.Refresh();
-    }
-
-    private void DrawFbxRestoreArea()
-    {
-        EditorGUILayout.Space();
-        EditorGUILayout.LabelField(strings.BottomFbxTitle, EditorStyles.boldLabel);
-
-        string autoFbxPath = TryAutoLocateFbxPath();
-        if (!string.IsNullOrEmpty(autoFbxPath))
-            EditorGUILayout.HelpBox(string.Format(strings.StatusAutoLocatedFmt, autoFbxPath), MessageType.None);
-        else
-            EditorGUILayout.HelpBox(strings.WarnAutoLocateMissing, MessageType.Warning);
-
-        manualFbxAsset = EditorGUILayout.ObjectField(strings.ManualFbxLabel, manualFbxAsset, typeof(UnityEngine.Object), false);
-
-        if (GUILayout.Button(strings.BottomFbxButton, GUILayout.Height(26)))
-            RestoreMesh_FromFBX_ByObjectName();
-    }
-
-    private string TryAutoLocateFbxPath()
-    {
-        if (smr == null) return null;
-
-        var srcGo = PrefabUtility.GetCorrespondingObjectFromSource(smr.gameObject);
-        if (srcGo != null)
-        {
-            string path = AssetDatabase.GetAssetPath(srcGo);
-            if (!string.IsNullOrEmpty(path) && path.EndsWith(".fbx", StringComparison.OrdinalIgnoreCase))
-                return path;
-        }
-
-        var animator = smr.GetComponentInParent<Animator>();
-        if (animator?.avatar != null)
-        {
-            string avatarPath = AssetDatabase.GetAssetPath(animator.avatar);
-            if (!string.IsNullOrEmpty(avatarPath) && avatarPath.EndsWith(".fbx", StringComparison.OrdinalIgnoreCase))
-                return avatarPath;
-        }
-        return null;
-    }
-
-    private void RestoreMesh_FromFBX_ByObjectName()
-    {
-        if (smr == null) { SetStatus(strings.StatusNoSMR, MessageType.Error); return; }
-
-        string fbxPath = null;
-        if (manualFbxAsset != null)
-        {
-            string p = AssetDatabase.GetAssetPath(manualFbxAsset);
-            if (!string.IsNullOrEmpty(p) && p.EndsWith(".fbx", StringComparison.OrdinalIgnoreCase))
-                fbxPath = p;
-            else
-            {
-                SetStatus(strings.ErrorNoFBXSelected, MessageType.Error);
-                return;
-            }
-        }
-        else
-        {
-            fbxPath = TryAutoLocateFbxPath();
-            if (string.IsNullOrEmpty(fbxPath))
-            {
-                SetStatus(strings.ErrorAutoLocateFBXFailed, MessageType.Error);
-                return;
-            }
-        }
-
-        var assets = AssetDatabase.LoadAllAssetsAtPath(fbxPath);
-        if (assets == null || assets.Length == 0) { SetStatus(strings.ErrorFBXNoChildren, MessageType.Error); return; }
-
-        string objName = smr.gameObject.name;
-        Mesh found = null;
-
-        foreach (var a in assets) { if (a is Mesh m && m.name == objName) { found = m; break; } }
-        if (found == null) { foreach (var a in assets) { if (a is Mesh m && string.Equals(m.name, objName, StringComparison.OrdinalIgnoreCase)) { found = m; break; } } }
-        if (found == null) { foreach (var a in assets) { if (a is Mesh m && m.name.IndexOf(objName, StringComparison.OrdinalIgnoreCase) >= 0) { found = m; break; } } }
-
-        if (found == null) { SetStatus(string.Format(strings.WarnFbxNoMatchFmt, objName), MessageType.Warning); return; }
-
-        Undo.RecordObject(smr, "Restore Mesh From FBX");
-        smr.sharedMesh = found;
-        EditorUtility.SetDirty(smr);
-
-        sourceMesh = smr.sharedMesh;
-        currentMeshRef = sourceMesh;
-        SetStatus(string.Format(strings.StatusFbxRestoredFmt, found.name), MessageType.Info);
+        EditorGUILayout.HelpBox(
+            "工作原理：将 BlendShape 的所有帧增量按 (上限/100) 线性缩放。\n" +
+            "示例：上限设为 50，则新网格上该形态键拉到 100，等效为原网格的 50，从而减少叠加导致的穿模。\n\n" +
+            "注意事项：\n" +
+            $"• 默认保存路径：{kBaseFolder}\n" +
+            $"• 生成网格保存路径：{kGeneratedFolder}/<物体名称>_<时间戳>\n" +
+            "• 源 Mesh 必须开启 Read/Write Enabled。\n" +
+            "• 若形态键包含多帧（如 0/25/50/100），每帧增量统一比例缩放，插值结构保持不变。\n" +
+            "• 生成的新 Mesh 资产独立保存，不会破坏原始 FBX。\n" +
+            "• 时间戳格式：yyyyMMdd_HH_mm_ss（例如 20251203_19_06_00）。",
+            MessageType.Info
+        );
     }
 
     private void DrawStatusArea()
@@ -530,26 +152,127 @@ public class BlendShapeCapReducer : EditorWindow
     private void EnsurePerShapeCaps(Mesh m)
     {
         for (int i = 0; i < m.blendShapeCount; i++)
-            if (!perShapeCap.ContainsKey(i)) perShapeCap[i] = 100f;
+        {
+            if (!perShapeCap.ContainsKey(i))
+                perShapeCap[i] = 100f;
+        }
+    }
+
+    private void GenerateAndReplace()
+    {
+        var src = sourceMesh;
+        if (src == null)
+        {
+            SetStatus("失败：未找到源 Mesh。", MessageType.Error);
+            return;
+        }
+        if (!src.isReadable)
+        {
+            SetStatus("失败：源 Mesh 未开启 Read/Write。请在 Import Settings 勾选 Read/Write Enabled。", MessageType.Error);
+            return;
+        }
+        if (src.blendShapeCount == 0)
+        {
+            SetStatus("失败：该 Mesh 不包含任何 BlendShapes，无法生成。", MessageType.Error);
+            return;
+        }
+        if (smr == null)
+        {
+            SetStatus("失败：未指定 SkinnedMeshRenderer。", MessageType.Error);
+            return;
+        }
+
+        // 计算每个形态键的缩放因子（cap/100）
+        var caps = new Dictionary<int, float>();
+        for (int i = 0; i < src.blendShapeCount; i++)
+        {
+            float cap = perShapeCap.TryGetValue(i, out float v) ? v : 100f;
+            caps[i] = Mathf.Clamp(cap, 0f, 100f) / 100f;
+        }
+
+        // 创建新 Mesh
+        Mesh newMesh;
+        try
+        {
+            newMesh = CreateCappedMesh(src, caps);
+        }
+        catch (Exception e)
+        {
+            SetStatus($"失败：生成新网格时出现异常。\n{e.Message}", MessageType.Error);
+            return;
+        }
+
+        // 生成网格保存路径：Assets/LGC/Tools/形态键上限重设/已生成/<物体名称>_<时间戳>/<源Mesh名>_Capped.asset
+        string objName = smr.gameObject.name;
+        string timestamp = DateTime.Now.ToString("yyyyMMdd_HH_mm_ss");
+        string dir = $"{kGeneratedFolder}/{SanitizeFolderName(objName)}_{timestamp}";
+        try
+        {
+            CreateFolderRecursive(kBaseFolder);      // 确保基础目录存在
+            CreateFolderRecursive(kGeneratedFolder); // 确保“已生成”目录存在
+            CreateFolderRecursive(dir);              // 创建本次对象目录
+        }
+        catch (Exception e)
+        {
+            SetStatus($"失败：创建保存目录时出现异常。\n{e.Message}", MessageType.Error);
+            return;
+        }
+
+        string assetName = $"{src.name}_Capped.asset";
+        string fullPath = Path.Combine(dir, assetName).Replace("\\", "/");
+
+        try
+        {
+            AssetDatabase.CreateAsset(newMesh, AssetDatabase.GenerateUniqueAssetPath(fullPath));
+            AssetDatabase.SaveAssets();
+            AssetDatabase.Refresh();
+        }
+        catch (Exception e)
+        {
+            SetStatus($"失败：保存新网格资产时出现异常。\n{e.Message}", MessageType.Error);
+            return;
+        }
+
+        // 自动替换到当前渲染器
+        try
+        {
+            Undo.RecordObject(smr, "Replace SharedMesh with Capped");
+            smr.sharedMesh = newMesh;
+            EditorUtility.SetDirty(smr);
+        }
+        catch (Exception e)
+        {
+            SetStatus($"生成成功但替换到当前渲染器失败：\n{e.Message}\n资产路径：{fullPath}", MessageType.Warning);
+            return;
+        }
+
+        SetStatus($"完成：已生成并替换。\n保存路径：{fullPath}", MessageType.Info);
     }
 
     private static string SanitizeFolderName(string name)
     {
-        foreach (var c in Path.GetInvalidFileNameChars()) name = name.Replace(c.ToString(), "_");
-        return string.IsNullOrEmpty(name) ? "Unnamed" : name;
+        if (string.IsNullOrEmpty(name)) return "Unnamed";
+        char[] invalid = Path.GetInvalidFileNameChars();
+        foreach (var c in invalid)
+        {
+            name = name.Replace(c.ToString(), "_");
+        }
+        return name;
     }
 
     private static void CreateFolderRecursive(string path)
     {
         if (string.IsNullOrEmpty(path) || !path.StartsWith("Assets")) return;
         var parts = path.Split('/');
-        string current = parts[0];
+        string current = parts[0]; // "Assets"
         for (int i = 1; i < parts.Length; i++)
         {
             string next = parts[i];
             string candidate = $"{current}/{next}";
             if (!AssetDatabase.IsValidFolder(candidate))
+            {
                 AssetDatabase.CreateFolder(current, next);
+            }
             current = candidate;
         }
     }
@@ -557,27 +280,54 @@ public class BlendShapeCapReducer : EditorWindow
     private Mesh CreateCappedMesh(Mesh src, Dictionary<int, float> capsScale)
     {
         int vCount = src.vertexCount;
-        Mesh dst = new Mesh { name = src.name + "_Capped", indexFormat = src.indexFormat };
 
+        Mesh dst = new Mesh
+        {
+            name = src.name + "_Capped",
+            indexFormat = src.indexFormat
+        };
+
+        // 复制基础数据
         dst.vertices = src.vertices;
-        dst.normals = src.normals;
-        dst.tangents = src.tangents;
-        dst.colors32 = src.colors32;
 
+        // 法线
+        var normals = src.normals;
+        if (normals != null && normals.Length == vCount) dst.normals = normals;
+        else dst.RecalculateNormals();
+
+        // 切线
+        var tans = src.tangents;
+        if (tans != null && tans.Length == vCount) dst.tangents = tans;
+
+        // 顶点色
+        var colors32 = src.colors32;
+        if (colors32 != null && colors32.Length == vCount) dst.colors32 = colors32;
+
+        // UV（最多 8 通道）
         for (int channel = 0; channel < 8; channel++)
         {
             var uvs = new List<Vector4>();
             src.GetUVs(channel, uvs);
-            if (uvs.Count == vCount) dst.SetUVs(channel, uvs);
+            if (uvs != null && uvs.Count == vCount)
+                dst.SetUVs(channel, uvs);
         }
 
+        // 子网格
         dst.subMeshCount = src.subMeshCount;
-        for (int sm = 0; sm < src.subMeshCount; sm++) dst.SetTriangles(src.GetTriangles(sm), sm);
+        for (int sm = 0; sm < src.subMeshCount; sm++)
+        {
+            dst.SetTriangles(src.GetTriangles(sm), sm);
+        }
 
+        // Skin 数据（若存在）
         dst.bindposes = src.bindposes;
-        dst.boneWeights = src.boneWeights;
+        var boneWeights = src.boneWeights;
+        if (boneWeights != null && boneWeights.Length == vCount)
+            dst.boneWeights = boneWeights;
+
         dst.bounds = src.bounds;
 
+        // BlendShapes：读取每一帧并按 cap 缩放
         var deltaV = new Vector3[vCount];
         var deltaN = new Vector3[vCount];
         var deltaT = new Vector3[vCount];
@@ -586,10 +336,14 @@ public class BlendShapeCapReducer : EditorWindow
         {
             string shapeName = src.GetBlendShapeName(shapeIndex);
             int frameCount = src.GetBlendShapeFrameCount(shapeIndex);
+
             float scale = capsScale.TryGetValue(shapeIndex, out float s) ? s : 1f;
+            scale = Mathf.Max(0f, scale);
 
             for (int frame = 0; frame < frameCount; frame++)
             {
+                float weight = src.GetBlendShapeFrameWeight(shapeIndex, frame);
+
                 src.GetBlendShapeFrameVertices(shapeIndex, frame, deltaV, deltaN, deltaT);
 
                 if (scale != 1f)
@@ -602,7 +356,7 @@ public class BlendShapeCapReducer : EditorWindow
                     }
                 }
 
-                dst.AddBlendShapeFrame(shapeName, src.GetBlendShapeFrameWeight(shapeIndex, frame), deltaV, deltaN, deltaT);
+                dst.AddBlendShapeFrame(shapeName, weight, deltaV, deltaN, deltaT);
             }
         }
 
