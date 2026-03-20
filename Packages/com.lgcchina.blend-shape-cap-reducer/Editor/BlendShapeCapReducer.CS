@@ -169,10 +169,10 @@ public class BlendShapeCapperWindow : EditorWindow
     private const string kBaseFolder = "Assets/LGC/Tools/形态键上限重设";
     private const string kGeneratedFolder = "Assets/LGC/Tools/形态键上限重设/已生成";
 
-    [MenuItem("LGC/形态键上限重设")]
+    [MenuItem("LGC/LGC_BlendShapeCapReducer_形态键上限重设")]
     public static void ShowWindow()
     {
-        var win = GetWindow<BlendShapeCapperWindow>("形态键上限重设");
+        var win = GetWindow<BlendShapeCapperWindow>("LGC_BlendShapeCapReducer_形态键上限重设");
         win.minSize = new Vector2(700, 600);
         win.statusMessage = win.strings.StatusReady;
         win.statusType = MessageType.Info;
