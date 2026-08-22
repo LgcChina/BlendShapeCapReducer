@@ -1,76 +1,65 @@
-# VPM Package Template
+# 更新日志
 
-Starter for making Packages, including automation for building and publishing them.
+本文件记录 `com.lgcchina.blend-shape-cap-reducer` 的版本变更。
 
-Once you're all set up, you'll be able to push changes to this repository and have .zip and .unitypackage versions automatically generated, and a listing made which works in the VPM for delivering updates for this package. If you want to make a listing with a variety of packages, check out our [template-package-listing](https://github.com/vrchat-community/template-package-listing) repo.
+## [2.0.5] - 2026-08-22
 
-## ▶ Getting Started
+### 文档
 
-* Press [![Use This Template](https://user-images.githubusercontent.com/737888/185467681-e5fdb099-d99f-454b-8d9e-0760e5a6e588.png)](https://github.com/vrchat-community/template-package/generate)
-to start a new GitHub project based on this template.
-  * Choose a fitting repository name and description.
-  * Set the visibility to 'Public'. You can also choose 'Private' and change it later.
-  * You don't need to select 'Include all branches.'
-* Clone this repository locally using Git.
-  * If you're unfamiliar with Git and GitHub, [visit GitHub's documentation](https://docs.github.com/en/get-started/quickstart/git-and-github-learning-resources) to learn more.
-* Add the folder to Unity Hub and open it as a Unity Project.
-* After opening the project, wait while the VPM resolver is downloaded and added to your project.
-  * This gives you access to the VPM Package Maker and Package Resolver tools.
+- 新增本更新日志文件，汇总 `2.0.0` 至当前版本的功能和修复。
 
-## 🚇 Migrating Assets Package
-Full details at [Converting Assets to a VPM Package](https://vcc.docs.vrchat.com/guides/convert-unitypackage)
+## [2.0.4] - 2026-08-22
 
-## ✏️ Working on Your Package
+### 新增
 
-* Delete the "Packages/com.vrchat.demo-template" directory or reuse it for your own package.
-  * If you reuse the package, don't forget to rename it and add generated meta files to your repository!
-* Update the `.gitignore` file in the "Packages" directory to include your package.
-  * For example, change `!com.vrchat.demo-template` to `!com.username.package-name`.
-  * `.gitignore` files normally *exclude* the contents of your "Packages" directory. This `.gitignore` in this template show how to *include* the demo package. You can easily change this out for your own package name.
-* Open the Unity project and work on your package's files in your favorite code editor.
-* When you're ready, commit and push your changes.
-* Once you've set up the automation as described below, you can easily publish new versions.
+- 在生成区域增加完整输出的耗时、内存和磁盘空间提示。
+- 增加稀疏输出模式的风险提示，说明其可能影响 BlendShape 的阴影、高光和光照表现。
 
-## 🤖 Setting up the Automation
+## [2.0.3] - 2026-08-22
 
-Create a repository variable with the name and value described below.
-For details on how to create repository variables, see [Creating Configuration Variables for a Repository](https://docs.github.com/en/actions/learn-github-actions/variables#creating-configuration-variables-for-a-repository).
-Make sure you are creating a **repository variable**, and not a **repository secret**.
+### 修复
 
-* `PACKAGE_NAME`: the name of your package, like `com.vrchat.demo-template`.
+- 按源 Mesh 的实际维度复制 UV 通道，分别保留 2D、3D 和 4D UV 数据。
+- 修复生成 Mesh 将普通 UV 强制写成 4D，导致 Modular Avatar 1.18+ 报错 `Unsupported UV dimension 4` 的问题。
 
-Finally, go to the "Settings" page for your repo, then choose "Pages", and look for the heading "Build and deployment". Change the "Source" dropdown from "Deploy from a branch" to "GitHub Actions".
+## [2.0.2] - 2026-08-22
 
-That's it!
-Some other notes:
-* We highly recommend you keep the existing folder structure of this template.
-  * The root of the project should be a Unity project.
-  * Your packages should be in the "Packages" directory.
-  * If you deviate from this folder structure, you'll need to update the paths that assume your package is in the "Packages" directory on lines 24, 38, 41 and 57.
-* If you want to store and generate your web files in a folder other than "Website" in the root, you can change the `listPublicDirectory` item [here in build-listing.yml](.github/workflows/build-listing.yml#L17).
+### 新增
 
-## 🎉 Publishing a Release
+- 增加可选的稀疏 BlendShape 输出模式。
+- 默认使用完整输出，保留 BlendShape 的顶点、法线和切线位移。
+- 稀疏输出仅保留顶点位移，用于降低生成资产的空间占用。
 
-You can make a release by running the [Build Release](.github/workflows/release.yml) action. The version specified in your `package.json` file will be used to define the version of the release.
+## [2.0.1] - 2026-08-22
 
-## 📃 Rebuilding the Listing
+### 新增
 
-Whenever you make a change to a release - manually publishing it, or manually creating, editing or deleting a release, the [Build Repo Listing](.github/workflows/build-listing.yml) action will make a new index of all the releases available, and publish them as a website hosted fore free on [GitHub Pages](https://pages.github.com/). This listing can be used by the VPM to keep your package up to date, and the generated index page can serve as a simple landing page with info for your package. The URL for your package will be in the format `https://username.github.io/repo-name`.
+- 工具界面底部显示当前版本号。
 
-## 🏠 Customizing the Landing Page (Optional)
+### 修复
 
-The action which rebuilds the listing also publishes a landing page. The source for this page is in `Website/index.html`. The automation system uses [Scriban](https://github.com/scriban/scriban) to fill in the objects like `{{ this }}` with information from the latest release's manifest, so it will stay up-to-date with the name, id and description that you provide there. You are welcome to modify this page however you want - just use the existing `{{ template.objects }}` to fill in that info wherever you like. The entire contents of your "Website" folder are published to your GitHub Page each time.
+- 生成、撤销和 FBX 恢复统一记录 Prefab 覆盖并标记场景为已修改。
+- 完善 Mesh 子网格拓扑、`baseVertex` 和骨骼权重的复制。
+- 保留源 Mesh 包围盒，避免变形后出现错误剔除。
+- FBX 恢复改为唯一名称匹配，避免模糊匹配到错误 Mesh。
+- FBX 恢复后清理旧的生成状态和形态键上限缓存。
+- 限制生成目录删除范围，避免误删其他资源。
 
-## 💻 Technical Stuff
+## [2.0.0] - 2026-08-21
 
-You are welcome to make your own changes to the automation process to make it fit your needs, and you can create Pull Requests if you have some changes you think we should adopt. Here's some more info on the included automation:
+### 新增
 
-### Build Release Action
-[release.yml](/.github/workflows/release.yml)
+- 为每个 BlendShape 设置 `0~100` 的变形上限。
+- 生成新的 Mesh 资产并替换 `SkinnedMeshRenderer.sharedMesh`。
+- 支持撤销本次生成并删除对应生成目录。
+- 支持从手动选择或自动定位的 FBX 恢复 Mesh。
+- 支持中文、英文和日文界面。
+- 提供源 Mesh、当前 Mesh 和最新生成 Mesh 的引用信息。
 
-This is a composite action combining a variety of existing GitHub Actions and some shell commands to create both a .zip of your Package and a .unitypackage. It creates a release which is named for the `version` in the `package.json` file found in your target Package, and publishes the zip, the unitypackage and the package.json file to this release.
+2.0-2025年12月3日
+Add language 日语 英语
+支持快捷还原或撤回本次生成
+增加防呆设计
 
-### Build Repo Listing
-[build-listing.yml](.github/workflows/build-listing.yml)
-
-This is a composite action which builds a vpm-compatible [Repo Listing](https://vcc.docs.vrchat.com/vpm/repos) based on the releases you've created. In order to find all your releases and combine them into a listing, it checks out [another repository](https://github.com/vrchat-community/package-list-action) which has a [Nuke](https://nuke.build/) project which includes the VPM core lib to have access to its types and methods. This project will be expanded to include more functionality in the future - for now, the action just calls its `BuildRepoListing` target.
+1.0
+简洁款，仅负责直接生成
