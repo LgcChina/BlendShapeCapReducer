@@ -1,7 +1,7 @@
 {
   "name": "com.lgcchina.blend-shape-cap-reducer",
   "displayName": "LGC_BlendShapeCapReducer_形态键上限重设",
-  "version": "2.0.0",
+  "version": "2.0.5",
   "unity": "2022.3",
   "description": "调整网格BlendShape上限，支持生成替换网格、撤销生成、从FBX还原网格",
   "author": {

@@ -21,7 +21,9 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using UnityEditor;
+using UnityEditor.SceneManagement;
 using UnityEngine;
+using UnityEngine.Rendering;
 
 public class BlendShapeCapperWindow : EditorWindow
 {
@@ -32,9 +34,10 @@ public class BlendShapeCapperWindow : EditorWindow
 
     private class Strings
     {
-        public string ToolTitle, LangLabel, SkinnedMeshRendererLabel, ClearBtn;
+        public string ToolTitle, LangLabel, SkinnedMeshRendererLabel, ClearBtn, VersionLabel;
         public string RefInfoTitle, SourceMeshLabel, CurrentMeshLabel, LastGenMeshLabel;
         public string CapsTitle, GenerateBtn, UndoBtn, BottomFbxTitle, ManualFbxLabel, BottomFbxButton;
+        public string FullOutputHelp, SparseOutputLabel, SparseOutputHelp;
         public string StatusReady, StatusNoSMR, ErrorNotReadable, WarnNoBlendShapes;
         public string StatusRecordedFmt, StatusGeneratedDone, StatusUndoDoneFmt, StatusUndoDoneNoDir;
         public string ErrorUndoNoSource, ErrorNoFBXSelected, ErrorAutoLocateFBXFailed, ErrorFBXNoChildren;
@@ -50,6 +53,7 @@ public class BlendShapeCapperWindow : EditorWindow
                     s.LangLabel = "Language";
                     s.SkinnedMeshRendererLabel = "SkinnedMeshRenderer";
                     s.ClearBtn = "Clear";
+                    s.VersionLabel = "Version";
                     s.RefInfoTitle = "References";
                     s.SourceMeshLabel = "Source Mesh";
                     s.CurrentMeshLabel = "Current Mesh";
@@ -60,6 +64,9 @@ public class BlendShapeCapperWindow : EditorWindow
                     s.BottomFbxTitle = "Restore Mesh from FBX (Independent)";
                     s.ManualFbxLabel = "Original FBX (optional)";
                     s.BottomFbxButton = "Restore from FBX";
+                    s.FullOutputHelp = "Complete output may take a long time and use substantial memory and disk space for meshes with many BlendShapes.";
+                    s.SparseOutputLabel = "Sparse BlendShape output (position deltas only)";
+                    s.SparseOutputHelp = "Sparse output omits BlendShape normal and tangent deltas to reduce asset size.";
                     s.StatusReady = "Ready: drag a SkinnedMeshRenderer.";
                     s.StatusNoSMR = "Hint: SkinnedMeshRenderer not assigned or sharedMesh is null.";
                     s.ErrorNotReadable = "Error: Mesh is not Read/Write Enabled.";
@@ -83,6 +90,7 @@ public class BlendShapeCapperWindow : EditorWindow
                     s.LangLabel = "言語";
                     s.SkinnedMeshRendererLabel = "SkinnedMeshRenderer";
                     s.ClearBtn = "クリア";
+                    s.VersionLabel = "バージョン";
                     s.RefInfoTitle = "参照情報";
                     s.SourceMeshLabel = "ソースメッシュ";
                     s.CurrentMeshLabel = "現在のメッシュ";
@@ -93,6 +101,9 @@ public class BlendShapeCapperWindow : EditorWindow
                     s.BottomFbxTitle = "FBXからメッシュを復元（独立）";
                     s.ManualFbxLabel = "元FBX（任意）";
                     s.BottomFbxButton = "FBXから復元";
+                    s.FullOutputHelp = "BlendShapeが多いメッシュでは、完全出力に時間がかかり、大量のメモリとディスク容量を使用する場合があります。";
+                    s.SparseOutputLabel = "BlendShapeを軽量化（頂点変位のみ）";
+                    s.SparseOutputHelp = "法線と接線のBlendShape変位を省略してアセット容量を削減します。";
                     s.StatusReady = "準備完了：SkinnedMeshRendererをドラッグしてください。";
                     s.StatusNoSMR = "ヒント：SkinnedMeshRenderer未指定、またはsharedMeshがnullです。";
                     s.ErrorNotReadable = "エラー：メッシュがRead/Write有効ではありません。";
@@ -116,6 +127,7 @@ public class BlendShapeCapperWindow : EditorWindow
                     s.LangLabel = "语言";
                     s.SkinnedMeshRendererLabel = "SkinnedMeshRenderer";
                     s.ClearBtn = "清除";
+                    s.VersionLabel = "版本";
                     s.RefInfoTitle = "引用信息";
                     s.SourceMeshLabel = "源网格";
                     s.CurrentMeshLabel = "当前网格";
@@ -126,6 +138,9 @@ public class BlendShapeCapperWindow : EditorWindow
                     s.BottomFbxTitle = "从FBX还原网格（独立）";
                     s.ManualFbxLabel = "原始FBX（可选）";
                     s.BottomFbxButton = "从FBX还原网格";
+                    s.FullOutputHelp = "完整输出在 BlendShape 较多时可能耗时较长，并占用较多内存和磁盘空间。";
+                    s.SparseOutputLabel = "稀疏输出（仅保留顶点位移）";
+                    s.SparseOutputHelp = "省略 BlendShape 的法线和切线位移，以减少生成资产大小。";
                     s.StatusReady = "准备就绪：请拖入含有 BlendShapes 的 SkinnedMeshRenderer。";
                     s.StatusNoSMR = "提示：尚未指定 SkinnedMeshRenderer 或其 sharedMesh为空。";
                     s.ErrorNotReadable = "错误：Mesh 未开启 Read/Write。";
@@ -165,9 +180,11 @@ public class BlendShapeCapperWindow : EditorWindow
     private MessageType statusType = MessageType.Info;
 
     private readonly Dictionary<int, float> perShapeCap = new Dictionary<int, float>();
+    private bool sparseBlendShapeOutput;
 
     private const string kBaseFolder = "Assets/LGC/Tools/形态键上限重设";
     private const string kGeneratedFolder = "Assets/LGC/Tools/形态键上限重设/已生成";
+    private const string kToolVersion = "2.0.5";
 
     [MenuItem("LGC/LGC_BlendShapeCapReducer_形态键上限重设")]
     public static void ShowWindow()
@@ -282,6 +299,11 @@ public class BlendShapeCapperWindow : EditorWindow
         EditorGUILayout.Space();
         EnsurePerShapeCaps(sourceMesh);
         EditorGUILayout.LabelField(strings.CapsTitle, EditorStyles.miniBoldLabel);
+        sparseBlendShapeOutput = EditorGUILayout.ToggleLeft(strings.SparseOutputLabel, sparseBlendShapeOutput);
+        if (sparseBlendShapeOutput)
+            EditorGUILayout.HelpBox(strings.SparseOutputHelp, MessageType.Info);
+        else
+            EditorGUILayout.HelpBox(strings.FullOutputHelp, MessageType.Warning);
 
         scroll = EditorGUILayout.BeginScrollView(scroll, GUILayout.Height(260));
         for (int i = 0; i < sourceMesh.blendShapeCount; i++)
@@ -356,7 +378,7 @@ public class BlendShapeCapperWindow : EditorWindow
             caps[i] = Mathf.Clamp(cap, 0f, 100f) / 100f;
         }
 
-        Mesh newMesh = CreateCappedMesh(sourceMesh, caps);
+        Mesh newMesh = CreateCappedMesh(sourceMesh, caps, sparseBlendShapeOutput);
 
         string objName = smr.gameObject.name;
         string timestamp = DateTime.Now.ToString("yyyyMMdd_HH_mm_ss");
@@ -371,9 +393,7 @@ public class BlendShapeCapperWindow : EditorWindow
         AssetDatabase.SaveAssets();
         AssetDatabase.Refresh();
 
-        Undo.RecordObject(smr, "Replace SharedMesh with Capped");
-        smr.sharedMesh = newMesh;
-        EditorUtility.SetDirty(smr);
+        AssignSharedMesh(newMesh, "Replace SharedMesh with Capped");
 
         sourceMesh = smr.sharedMesh;
         currentMeshRef = sourceMesh;
@@ -392,9 +412,7 @@ public class BlendShapeCapperWindow : EditorWindow
             return;
         }
 
-        Undo.RecordObject(smr, "Restore Original Mesh");
-        smr.sharedMesh = recordedOriginalMesh;
-        EditorUtility.SetDirty(smr);
+        AssignSharedMesh(recordedOriginalMesh, "Restore Original Mesh");
 
         if (!string.IsNullOrEmpty(lastGeneratedDir))
         {
@@ -415,17 +433,43 @@ public class BlendShapeCapperWindow : EditorWindow
 
     private void DeleteFolderRecursively(string folderPath)
     {
-        if (string.IsNullOrEmpty(folderPath) || !folderPath.StartsWith("Assets")) return;
-        string[] guids = AssetDatabase.FindAssets("", new[] { folderPath });
+        if (string.IsNullOrEmpty(folderPath)) return;
+
+        string normalizedPath = folderPath.Replace("\\", "/").TrimEnd('/');
+        string generatedRoot = kGeneratedFolder.TrimEnd('/') + "/";
+        if (!normalizedPath.StartsWith(generatedRoot, StringComparison.OrdinalIgnoreCase)) return;
+
+        string[] guids = AssetDatabase.FindAssets("", new[] { normalizedPath });
+        var assetPaths = new List<string>();
         foreach (string guid in guids)
         {
             string assetPath = AssetDatabase.GUIDToAssetPath(guid);
-            if (!AssetDatabase.IsValidFolder(assetPath))
-                AssetDatabase.DeleteAsset(assetPath);
+            if (!string.IsNullOrEmpty(assetPath)) assetPaths.Add(assetPath);
         }
-        AssetDatabase.DeleteAsset(folderPath);
+
+        assetPaths.Sort((left, right) => right.Length.CompareTo(left.Length));
+        foreach (string assetPath in assetPaths)
+            AssetDatabase.DeleteAsset(assetPath);
+
+        AssetDatabase.DeleteAsset(normalizedPath);
         AssetDatabase.SaveAssets();
         AssetDatabase.Refresh();
+    }
+
+    private void AssignSharedMesh(Mesh mesh, string undoName)
+    {
+        Undo.RecordObject(smr, undoName);
+        smr.sharedMesh = mesh;
+
+        if (PrefabUtility.IsPartOfPrefabInstance(smr))
+            PrefabUtility.RecordPrefabInstancePropertyModifications(smr);
+        else if (PrefabUtility.IsPartOfPrefabAsset(smr))
+            PrefabUtility.SavePrefabAsset(smr.gameObject);
+
+        EditorUtility.SetDirty(smr);
+        if (smr.gameObject.scene.IsValid())
+            EditorSceneManager.MarkSceneDirty(smr.gameObject.scene);
+        AssetDatabase.SaveAssets();
     }
 
     private void DrawFbxRestoreArea()
@@ -443,6 +487,14 @@ public class BlendShapeCapperWindow : EditorWindow
 
         if (GUILayout.Button(strings.BottomFbxButton, GUILayout.Height(26)))
             RestoreMesh_FromFBX_ByObjectName();
+
+        DrawVersionArea();
+    }
+
+    private void DrawVersionArea()
+    {
+        EditorGUILayout.Space(2);
+        EditorGUILayout.LabelField($"{strings.VersionLabel} {kToolVersion}", EditorStyles.centeredGreyMiniLabel);
     }
 
     private string TryAutoLocateFbxPath()
@@ -496,22 +548,69 @@ public class BlendShapeCapperWindow : EditorWindow
         var assets = AssetDatabase.LoadAllAssetsAtPath(fbxPath);
         if (assets == null || assets.Length == 0) { SetStatus(strings.ErrorFBXNoChildren, MessageType.Error); return; }
 
-        string objName = smr.gameObject.name;
-        Mesh found = null;
+        string objectName = smr.gameObject.name;
+        string currentMeshName = sourceMesh != null ? sourceMesh.name : null;
+        string recordedMeshName = recordedOriginalMesh != null ? recordedOriginalMesh.name : null;
+        Mesh found = FindMatchingFbxMesh(assets, objectName, currentMeshName, recordedMeshName);
 
-        foreach (var a in assets) { if (a is Mesh m && m.name == objName) { found = m; break; } }
-        if (found == null) { foreach (var a in assets) { if (a is Mesh m && string.Equals(m.name, objName, StringComparison.OrdinalIgnoreCase)) { found = m; break; } } }
-        if (found == null) { foreach (var a in assets) { if (a is Mesh m && m.name.IndexOf(objName, StringComparison.OrdinalIgnoreCase) >= 0) { found = m; break; } } }
+        if (found == null) { SetStatus(string.Format(strings.WarnFbxNoMatchFmt, objectName), MessageType.Warning); return; }
 
-        if (found == null) { SetStatus(string.Format(strings.WarnFbxNoMatchFmt, objName), MessageType.Warning); return; }
+        AssignSharedMesh(found, "Restore Mesh From FBX");
 
-        Undo.RecordObject(smr, "Restore Mesh From FBX");
-        smr.sharedMesh = found;
-        EditorUtility.SetDirty(smr);
-
-        sourceMesh = smr.sharedMesh;
-        currentMeshRef = sourceMesh;
+        // FBX restore is independent from the current generation session.
+        recordedOriginalMesh = found;
+        sourceMesh = found;
+        currentMeshRef = found;
+        lastGeneratedMeshRef = null;
+        lastGeneratedDir = null;
+        hasGeneratedThisSession = false;
+        perShapeCap.Clear();
         SetStatus(string.Format(strings.StatusFbxRestoredFmt, found.name), MessageType.Info);
+    }
+
+    private static Mesh FindMatchingFbxMesh(UnityEngine.Object[] assets, params string[] preferredNames)
+    {
+        var names = new List<string>();
+        foreach (string preferredName in preferredNames)
+        {
+            if (string.IsNullOrEmpty(preferredName)) continue;
+            AddNameCandidate(names, preferredName);
+
+            const string cappedSuffix = "_Capped";
+            if (preferredName.EndsWith(cappedSuffix, StringComparison.OrdinalIgnoreCase))
+                AddNameCandidate(names, preferredName.Substring(0, preferredName.Length - cappedSuffix.Length));
+        }
+
+        foreach (string name in names)
+        {
+            Mesh exact = FindUniqueMeshByName(assets, name, StringComparison.Ordinal);
+            if (exact != null) return exact;
+        }
+
+        foreach (string name in names)
+        {
+            Mesh caseInsensitive = FindUniqueMeshByName(assets, name, StringComparison.OrdinalIgnoreCase);
+            if (caseInsensitive != null) return caseInsensitive;
+        }
+
+        return null;
+    }
+
+    private static void AddNameCandidate(List<string> names, string name)
+    {
+        if (!names.Contains(name)) names.Add(name);
+    }
+
+    private static Mesh FindUniqueMeshByName(UnityEngine.Object[] assets, string name, StringComparison comparison)
+    {
+        Mesh found = null;
+        foreach (var asset in assets)
+        {
+            if (!(asset is Mesh mesh) || !string.Equals(mesh.name, name, comparison)) continue;
+            if (found != null) return null;
+            found = mesh;
+        }
+        return found;
     }
 
     private void DrawStatusArea()
@@ -554,7 +653,7 @@ public class BlendShapeCapperWindow : EditorWindow
         }
     }
 
-    private Mesh CreateCappedMesh(Mesh src, Dictionary<int, float> capsScale)
+    private Mesh CreateCappedMesh(Mesh src, Dictionary<int, float> capsScale, bool sparseOutput)
     {
         int vCount = src.vertexCount;
         Mesh dst = new Mesh { name = src.name + "_Capped", indexFormat = src.indexFormat };
@@ -566,16 +665,56 @@ public class BlendShapeCapperWindow : EditorWindow
 
         for (int channel = 0; channel < 8; channel++)
         {
-            var uvs = new List<Vector4>();
-            src.GetUVs(channel, uvs);
-            if (uvs.Count == vCount) dst.SetUVs(channel, uvs);
+            var attribute = (VertexAttribute)((int)VertexAttribute.TexCoord0 + channel);
+            if (!src.HasVertexAttribute(attribute)) continue;
+
+            int dimension = src.GetVertexAttributeDimension(attribute);
+            switch (dimension)
+            {
+                case 2:
+                {
+                    var uv2 = new List<Vector2>();
+                    src.GetUVs(channel, uv2);
+                    if (uv2.Count == vCount) dst.SetUVs(channel, uv2);
+                    break;
+                }
+
+                case 3:
+                {
+                    var uv3 = new List<Vector3>();
+                    src.GetUVs(channel, uv3);
+                    if (uv3.Count == vCount) dst.SetUVs(channel, uv3);
+                    break;
+                }
+
+                case 4:
+                {
+                    var uv4 = new List<Vector4>();
+                    src.GetUVs(channel, uv4);
+                    if (uv4.Count == vCount) dst.SetUVs(channel, uv4);
+                    break;
+                }
+            }
         }
 
         dst.subMeshCount = src.subMeshCount;
-        for (int sm = 0; sm < src.subMeshCount; sm++) dst.SetTriangles(src.GetTriangles(sm), sm);
+        for (int sm = 0; sm < src.subMeshCount; sm++)
+        {
+            // Preserve topology and base vertices instead of rebuilding every
+            // submesh as ordinary triangle indices.
+            dst.SetIndices(
+                src.GetIndices(sm, false),
+                src.GetTopology(sm),
+                sm,
+                false,
+                (int)src.GetBaseVertex(sm));
+        }
 
         dst.bindposes = src.bindposes;
-        dst.boneWeights = src.boneWeights;
+        CopyBoneWeights(src, dst);
+
+        // Capping deltas never expands the source deformation, so the source
+        // bounds remain conservative and preserve any importer-provided bounds.
         dst.bounds = src.bounds;
 
         var deltaV = new Vector3[vCount];
@@ -592,6 +731,15 @@ public class BlendShapeCapperWindow : EditorWindow
             {
                 src.GetBlendShapeFrameVertices(shapeIndex, frame, deltaV, deltaN, deltaT);
 
+                if (sparseOutput)
+                {
+                    // Unity serializes AddBlendShapeFrame sparsely when only
+                    // position deltas are present. This keeps the default
+                    // complete output intact while offering a smaller option.
+                    Array.Clear(deltaN, 0, deltaN.Length);
+                    Array.Clear(deltaT, 0, deltaT.Length);
+                }
+
                 if (scale != 1f)
                 {
                     for (int i = 0; i < vCount; i++)
@@ -606,8 +754,29 @@ public class BlendShapeCapperWindow : EditorWindow
             }
         }
 
-        dst.RecalculateBounds();
         return dst;
+    }
+
+    private static void CopyBoneWeights(Mesh src, Mesh dst)
+    {
+        if (!src.HasVertexAttribute(VertexAttribute.BlendWeight) ||
+            !src.HasVertexAttribute(VertexAttribute.BlendIndices))
+        {
+            dst.boneWeights = src.boneWeights;
+            return;
+        }
+
+        var bonesPerVertex = src.GetBonesPerVertex();
+        var allBoneWeights = src.GetAllBoneWeights();
+        try
+        {
+            dst.SetBoneWeights(bonesPerVertex, allBoneWeights);
+        }
+        finally
+        {
+            bonesPerVertex.Dispose();
+            allBoneWeights.Dispose();
+        }
     }
 }
 #endif
